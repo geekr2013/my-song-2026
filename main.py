@@ -3,7 +3,7 @@ import json
 import datetime
 import smtplib
 import random
-import gspread # <--- 이 부분이 빠져서 에러가 났었습니다. 추가 완료!
+import gspread 
 from google.oauth2.service_account import Credentials
 from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
@@ -14,7 +14,6 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 # --- 환경 변수 로드 ---
-# 환경변수 로드 실패 시 에러 메시지를 명확히 하기 위해 try-except 추가
 try:
     GCP_SA_KEY = json.loads(os.environ['GCP_SA_KEY'])
     SHEET_URL = os.environ['SHEET_URL']
@@ -35,7 +34,6 @@ def send_email(subject, body):
         msg['Subject'] = subject
         msg.attach(MIMEText(body, 'plain'))
         
-        # Gmail SMTP 서버 연결
         server = smtplib.SMTP('smtp.gmail.com', 587)
         server.starttls()
         server.login(EMAIL_USER, EMAIL_PASS)
@@ -43,8 +41,18 @@ def send_email(subject, body):
         server.quit()
         print("이메일 발송 성공")
     except Exception as e:
-        # 이메일 실패는 치명적 에러로 보지 않고 로그만 남김
-        print(f"이메일 발송 실패 (비번/설정 확인 필요): {e}")
+        print(f"이메일 발송 실패: {e}")
+
+def cleanup_files(files):
+    """작업이 끝난 파일을 삭제하여 디스크 공간을 확보합니다."""
+    print("🧹 임시 파일 청소 중...")
+    for file in files:
+        try:
+            if os.path.exists(file):
+                os.remove(file)
+                print(f"삭제 완료: {file}")
+        except Exception as e:
+            print(f"삭제 실패 ({file}): {e}")
 
 def get_target_link():
     print("스프레드시트 확인 중...")
@@ -59,7 +67,6 @@ def get_target_link():
         print(f"오늘 날짜 기준: {today}")
         
         for row in data:
-            # 날짜 컬럼 찾기 (대소문자 구분 없이)
             row_date = str(row.get('날짜', '') or row.get('Date', '') or row.get('date', ''))
             if today in row_date:
                 link = row.get('링크', '') or row.get('Link', '') or row.get('link', '')
@@ -84,13 +91,10 @@ def download_video(url):
 def create_lofi_content(input_path, original_title):
     print("Lofi 스타일 변환 시작 (무료 모드)...")
     
-    # 1. 비디오 로드
     clip = VideoFileClip(input_path)
-    # 영상 길이를 최대 3분으로 제한
     if clip.duration > 180:
         clip = clip.subclip(0, 180)
         
-    # 2. Lofi 효과 적용
     new_audio = clip.audio.fx(vfx.speedx, 0.85).volumex(0.8)
     
     new_clip = clip.fx(vfx.speedx, 0.85)
@@ -98,19 +102,17 @@ def create_lofi_content(input_path, original_title):
     new_clip = new_clip.fx(vfx.lum_contrast, lum=-10, contrast=0.1) 
     new_clip = new_clip.set_audio(new_audio)
 
-    # 3. 텍스트 오버레이
     try:
         display_title = original_title[:30] + "..." if len(original_title) > 30 else original_title
         text_content = f"Now Playing:\n{display_title}\n\nLofi Remixed"
         
-        # 폰트 에러 방지를 위해 시스템 기본 폰트 사용 시도 (None으로 설정하면 moviepy가 알아서 찾음)
         txt_clip = TextClip(text_content, fontsize=30, color='white', font='DejaVu-Sans-Bold')
         txt_clip = txt_clip.set_pos(('center', 'bottom')).set_duration(new_clip.duration)
         txt_clip = txt_clip.set_opacity(0.7)
         
         final_video = CompositeVideoClip([new_clip, txt_clip])
     except Exception as e:
-        print(f"텍스트 생성 중 오류 발생 (영상만 제작합니다): {e}")
+        print(f"텍스트 생성 중 오류 (영상만 제작): {e}")
         final_video = new_clip
 
     output_filename = "output_lofi.mp4"
@@ -140,7 +142,7 @@ def upload_to_youtube(file_path, title):
             'categoryId': '10' 
         },
         'status': {
-            'privacyStatus': 'private', 
+            'privacyStatus': 'private', # 테스트 성공 후 'public'으로 변경 고려
             'selfDeclaredMadeForKids': False,
         }
     }
@@ -152,24 +154,34 @@ def upload_to_youtube(file_path, title):
     return response.get('id')
 
 if __name__ == "__main__":
+    downloaded_file = "input_video.mp4"
+    output_file = "output_lofi.mp4"
+    
     try:
         url = get_target_link()
         if url:
             print(f"타겟 URL 발견: {url}")
-            video_file, original_title = download_video(url)
-            final_video = create_lofi_content(video_file, original_title)
-            vid_id = upload_to_youtube(final_video, original_title)
+            downloaded_file, original_title = download_video(url)
+            output_file = create_lofi_content(downloaded_file, original_title)
+            vid_id = upload_to_youtube(output_file, original_title)
+            
             send_email(
                 "[성공] Lofi 영상 자동 업로드 완료", 
                 f"영상 제목: {original_title}\n결과 확인: https://youtu.be/{vid_id}\n(현재 비공개 상태입니다)"
             )
+            
+            # --- 마지막 단계: 파일 삭제 ---
+            cleanup_files([downloaded_file, output_file])
+            
         else:
             print("오늘 날짜의 처리할 영상 링크가 없습니다. (정상 종료)")
     except Exception as e:
         print(f"치명적 에러 발생: {e}")
-        # 이메일 전송 시도, 실패해도 프로그램 종료는 진행
         try:
             send_email("[실패] 영상 생성 중 에러 발생", str(e))
         except:
             pass
+        
+        # 에러가 나도 파일이 남아있다면 삭제 시도
+        cleanup_files([downloaded_file, output_file])
         exit(1)
