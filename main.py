@@ -28,9 +28,9 @@ except KeyError as e:
     exit(1)
 
 # --- 설정값 ---
-TARGET_DURATION_MIN = 10  # 목표 영상 길이 (분). 최소 이 시간보다 길게 만듭니다.
-LOFI_SPEED = 0.85         # Lofi 특유의 늘어지는 속도 (0.8~0.9 추천)
-RESOLUTION_HEIGHT = 720   # 처리 속도를 위해 720p로 고정 (FHD는 무료 서버에서 너무 오래 걸림)
+TARGET_DURATION_MIN = 10  # 목표 영상 길이 (분)
+LOFI_SPEED = 0.85         # Lofi 속도
+RESOLUTION_HEIGHT = 720   # 해상도
 
 def send_email(subject, body):
     try:
@@ -48,6 +48,7 @@ def send_email(subject, body):
         print("📧 이메일 발송 성공")
     except Exception as e:
         print(f"⚠️ 이메일 발송 실패: {e}")
+        print("💡 팁: EMAIL_USER가 정확한지, EMAIL_PASS에 공백이 없는지 확인하세요.")
 
 def cleanup_files(files):
     print("🧹 임시 파일 청소 중...")
@@ -67,18 +68,13 @@ def get_random_link():
         client = gspread.authorize(creds)
         sheet = client.open_by_url(SHEET_URL).sheet1
         
-        # 헤더를 제외한 모든 데이터 가져오기
         all_values = sheet.get_all_values()
         if len(all_values) < 2:
             return None, "데이터 없음"
             
-        # 첫 줄(헤더) 제외하고 실제 데이터만 추출
         data_rows = all_values[1:] 
-        
-        # 링크가 있는 행만 필터링 (B열 혹은 C열 등 링크 위치 확인)
         valid_links = []
         for row in data_rows:
-            # 행의 모든 셀을 검사해서 'http'가 포함된 셀을 찾음
             for cell in row:
                 if "youtube.com" in cell or "youtu.be" in cell:
                     valid_links.append(cell)
@@ -97,39 +93,43 @@ def get_random_link():
 
 def download_video(url):
     print(f"⬇️ 영상 다운로드 시작: {url}")
-    # 파일명 고정하지 않고 yt-dlp가 처리하게 한 뒤 이름 변경
+    
+    # [수정] 봇 차단 회피를 위한 User-Agent 추가 및 설정 강화
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'downloaded_video.%(ext)s',
-        'merge_output_format': 'mp4',  # <--- [중요] 이 옵션을 추가하여 무조건 mp4로 저장되게 함
+        'merge_output_format': 'mp4',
         'noplaylist': True,
+        # 중요: 가짜 브라우저 정보 추가
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        },
+        # 에러 무시하지 않고 재시도
+        'retries': 10,
+        'fragment_retries': 10,
     }
-    with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)
-        return "downloaded_video.mp4", info.get('title', 'Unknown Title')
+    
+    try:
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return "downloaded_video.mp4", info.get('title', 'Unknown Title')
+    except Exception as e:
+        print(f"❌ 다운로드 실패 (봇 탐지됨): {e}")
+        raise e
 
 def process_lofi_video(input_path, original_title):
-    print("🎨 Lofi 스타일 비디오 제작 중 (시간이 다소 소요됩니다)...")
+    print("🎨 Lofi 스타일 비디오 제작 중...")
     
-    # 1. 클립 로드 및 기본 설정
     clip = VideoFileClip(input_path)
-    
-    # 2. 오디오/비디오 속도 변환 (Slowed Effect)
-    # 속도를 줄이면 피치가 낮아져서 Lofi 느낌이 남
     print(" - 속도 및 피치 조절 중...")
     slow_clip = clip.fx(vfx.speedx, LOFI_SPEED)
     
-    # 3. 비디오 필터 적용 (빈티지/Cozy 느낌)
-    # 채도를 낮추고(0.7), 대비를 약간 높임
     print(" - 빈티지 컬러 필터 적용 중...")
     styled_clip = slow_clip.fx(vfx.colorx, 0.7).fx(vfx.lum_contrast, lum=0, contrast=0.1)
     
-    # 4. 해상도 조정 (720p) - 처리 속도 최적화
     if styled_clip.h > RESOLUTION_HEIGHT:
         styled_clip = styled_clip.resize(height=RESOLUTION_HEIGHT)
 
-    # 5. 반복 재생 (Looping) 로직
-    # 현재 길이가 목표 시간(예: 10분)보다 짧으면 반복
     current_duration = styled_clip.duration
     target_duration = TARGET_DURATION_MIN * 60
     
@@ -137,30 +137,26 @@ def process_lofi_video(input_path, original_title):
         repeat_count = int(target_duration // current_duration) + 1
         print(f" - 영상 길이가 짧아 {repeat_count}회 반복합니다.")
         final_clip = concatenate_videoclips([styled_clip] * repeat_count)
-        # 너무 길어지지 않게 목표 시간 + 약간의 여유에서 자름
         final_clip = final_clip.subclip(0, target_duration)
     else:
         final_clip = styled_clip.subclip(0, target_duration)
 
-    # 6. 텍스트 오버레이 (제목 표시)
     print(" - 자막 생성 중...")
     try:
         display_title = original_title[:40] + "..." if len(original_title) > 40 else original_title
         text_content = f"Now Playing:\n{display_title}\n\nSlowed & Reverb Mix"
         
-        # 텍스트 클립 (중앙 하단)
         txt_clip = TextClip(text_content, fontsize=24, color='white', font='DejaVu-Sans-Bold', align='center')
         txt_clip = txt_clip.set_pos(('center', 0.8), relative=True).set_duration(final_clip.duration)
         txt_clip = txt_clip.set_opacity(0.6)
         
         final_video = CompositeVideoClip([final_clip, txt_clip])
     except Exception as e:
-        print(f"⚠️ 텍스트 생성 실패 (영상만 진행): {e}")
+        print(f"⚠️ 텍스트 생성 실패: {e}")
         final_video = final_clip
 
     output_filename = "output_final.mp4"
-    # 렌더링 (preset='ultrafast'로 속도 향상, threads=2로 CPU 활용)
-    print(f"🚀 최종 렌더링 시작 (약 {TARGET_DURATION_MIN}분 영상)...")
+    print(f"🚀 최종 렌더링 시작...")
     final_video.write_videofile(
         output_filename, 
         codec='libx264', 
@@ -169,7 +165,6 @@ def process_lofi_video(input_path, original_title):
         threads=2,
         fps=24 
     )
-    
     return output_filename
 
 def upload_to_youtube(file_path, title):
@@ -183,34 +178,29 @@ def upload_to_youtube(file_path, title):
     )
     
     youtube = build('youtube', 'v3', credentials=creds)
-    
     today_str = datetime.datetime.now().strftime("%Y-%m-%d")
     
-    # 제목과 설명에 Lofi 관련 키워드 풍부하게 추가
     video_title = f"[Lofi/Study] {title} (Slowed & Reverb) - 10min Loop"
-    # 제목 길이 제한 100자
-    if len(video_title) > 100:
-        video_title = video_title[:97] + "..."
+    if len(video_title) > 100: video_title = video_title[:97] + "..."
 
     description = f"""
     Relaxing Lofi/Jazz Vibe Remix of '{title}'.
-    Perfect for Studying, Sleeping, and Coding.
-    
     Original Track: {title}
-    Remixed & Edited by AI Automation.
     
-    #lofi #jazz #study #relaxing #remix #backgroundmusic
+    Music provided by NoCopyrightSounds or Royalty Free Sources.
+    Remixed (Slowed & Reverb) for relaxation purposes.
+    #lofi #study #relaxing
     """
     
     request_body = {
         'snippet': {
             'title': video_title,
             'description': description,
-            'tags': ['lofi', 'slowed', 'reverb', 'study music', 'background music'],
+            'tags': ['lofi', 'slowed', 'reverb', 'study music'],
             'categoryId': '10' 
         },
         'status': {
-            'privacyStatus': 'private', # 테스트용: 비공개 / 실사용시: public
+            'privacyStatus': 'private',
             'selfDeclaredMadeForKids': False,
         }
     }
@@ -226,33 +216,20 @@ if __name__ == "__main__":
     output_file = "output_final.mp4"
     
     try:
-        # 1. 랜덤 링크 가져오기
         url, msg = get_random_link()
-        
         if url:
-            # 2. 영상 다운로드
             downloaded_file, original_title = download_video(url)
-            
-            # 3. Lofi 스타일 변환 및 루프 (10분 이상)
             output_file = process_lofi_video(downloaded_file, original_title)
-            
-            # 4. 유튜브 업로드
             vid_id = upload_to_youtube(output_file, original_title)
-            
-            # 5. 결과 메일 전송
             send_email(
                 f"[성공] {original_title} - Lofi 업로드 완료", 
-                f"랜덤 선택된 영상: {original_title}\n유튜브 링크: https://youtu.be/{vid_id}\n(10분 루프 버전으로 업로드됨)"
+                f"영상: https://youtu.be/{vid_id}"
             )
         else:
-            print(f"작업할 링크를 찾지 못했습니다: {msg}")
-            
+            print(f"링크 없음: {msg}")
     except Exception as e:
-        print(f"❌ 치명적 에러 발생: {e}")
-        try:
-            send_email("[실패] 자동화 스크립트 에러", str(e))
-        except:
-            pass
+        print(f"❌ 작업 실패: {e}")
+        try: send_email("[실패] 에러 발생", str(e))
+        except: pass
     finally:
-        # 6. 파일 청소 (성공/실패 여부 상관없이 실행)
         cleanup_files([downloaded_file, output_file])
