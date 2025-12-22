@@ -5,7 +5,8 @@ gspread
 oauth2client
 yt-dlp
 moviepy==1.0.3
-imageio
+Pillow==9.5.0
+imageio==2.33.1
 imageio-ffmpeg
 pydub
 pandas
