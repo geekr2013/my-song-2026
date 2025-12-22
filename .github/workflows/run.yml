@@ -23,6 +23,8 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
+        # [중요] 유튜브 차단 방지를 위한 Node.js 설치 추가
+        sudo apt-get install -y nodejs 
         sudo apt-get install -y ffmpeg ghostscript imagemagick
         # ImageMagick 정책 수정 (MoviePy 텍스트 에러 방지)
         sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
