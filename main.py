@@ -101,6 +101,7 @@ def download_video(url):
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'downloaded_video.%(ext)s',
+        'merge_output_format': 'mp4',  # <--- [중요] 이 옵션을 추가하여 무조건 mp4로 저장되게 함
         'noplaylist': True,
     }
     with YoutubeDL(ydl_opts) as ydl:
