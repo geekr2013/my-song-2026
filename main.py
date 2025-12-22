@@ -10,7 +10,7 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from yt_dlp import YoutubeDL
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, vfx, concatenate_videoclips, ColorClip
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, vfx, concatenate_videoclips
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -28,9 +28,9 @@ except KeyError as e:
     exit(1)
 
 # --- 설정값 ---
-TARGET_DURATION_MIN = 10  # 목표 영상 길이 (분)
-LOFI_SPEED = 0.85         # Lofi 속도
-RESOLUTION_HEIGHT = 720   # 해상도
+TARGET_DURATION_MIN = 10  
+LOFI_SPEED = 0.85         
+RESOLUTION_HEIGHT = 720   
 
 def send_email(subject, body):
     try:
@@ -48,7 +48,6 @@ def send_email(subject, body):
         print("📧 이메일 발송 성공")
     except Exception as e:
         print(f"⚠️ 이메일 발송 실패: {e}")
-        print("💡 팁: EMAIL_USER가 정확한지, EMAIL_PASS에 공백이 없는지 확인하세요.")
 
 def cleanup_files(files):
     print("🧹 임시 파일 청소 중...")
@@ -58,7 +57,7 @@ def cleanup_files(files):
                 os.remove(file)
                 print(f" - 삭제 완료: {file}")
         except Exception as e:
-            print(f" - 삭제 실패 ({file}): {e}")
+            pass
 
 def get_random_link():
     print("📋 스프레드시트에서 랜덤 링크 추출 중...")
@@ -72,9 +71,8 @@ def get_random_link():
         if len(all_values) < 2:
             return None, "데이터 없음"
             
-        data_rows = all_values[1:] 
         valid_links = []
-        for row in data_rows:
+        for row in all_values[1:]:
             for cell in row:
                 if "youtube.com" in cell or "youtu.be" in cell:
                     valid_links.append(cell)
@@ -94,33 +92,29 @@ def get_random_link():
 def download_video(url):
     print(f"⬇️ 영상 다운로드 시작: {url}")
     
-    # [수정] 봇 차단 회피를 위한 User-Agent 추가 및 설정 강화
+    # [핵심] 쿠키 파일 사용 설정 추가
     ydl_opts = {
         'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': 'downloaded_video.%(ext)s',
         'merge_output_format': 'mp4',
         'noplaylist': True,
-        # 중요: 가짜 브라우저 정보 추가
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        },
-        # 에러 무시하지 않고 재시도
+        'cookiefile': 'cookies.txt', # <--- 이 부분이 차단을 뚫는 열쇠입니다
         'retries': 10,
-        'fragment_retries': 10,
     }
     
-    try:
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)
-            return "downloaded_video.mp4", info.get('title', 'Unknown Title')
-    except Exception as e:
-        print(f"❌ 다운로드 실패 (봇 탐지됨): {e}")
-        raise e
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)
+        return "downloaded_video.mp4", info.get('title', 'Unknown Title')
 
 def process_lofi_video(input_path, original_title):
     print("🎨 Lofi 스타일 비디오 제작 중...")
     
     clip = VideoFileClip(input_path)
+    # 오디오가 없는 영상일 경우를 대비해 예외처리
+    if not clip.audio:
+        print("⚠️ 오디오가 없는 영상입니다. 변환을 건너뜁니다.")
+        return input_path 
+
     print(" - 속도 및 피치 조절 중...")
     slow_clip = clip.fx(vfx.speedx, LOFI_SPEED)
     
@@ -185,10 +179,10 @@ def upload_to_youtube(file_path, title):
 
     description = f"""
     Relaxing Lofi/Jazz Vibe Remix of '{title}'.
-    Original Track: {title}
     
-    Music provided by NoCopyrightSounds or Royalty Free Sources.
-    Remixed (Slowed & Reverb) for relaxation purposes.
+    Original Track: {title}
+    Remixed & Edited by AI Automation.
+    
     #lofi #study #relaxing
     """
     
@@ -232,4 +226,4 @@ if __name__ == "__main__":
         try: send_email("[실패] 에러 발생", str(e))
         except: pass
     finally:
-        cleanup_files([downloaded_file, output_file])
+        cleanup_files([downloaded_file, output_file, "cookies.txt"]) # 쿠키 파일도 청소
