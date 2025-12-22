@@ -20,15 +20,23 @@ jobs:
       with:
         python-version: '3.10'
 
+    # [중요] Node.js 최신 버전 설치 (자바스크립트 엔진 경고 해결)
+    - name: Set up Node.js
+      uses: actions/setup-node@v3
+      with:
+        node-version: 18
+
     - name: Install dependencies
       run: |
         sudo apt-get update
-        # [중요] 유튜브 차단 방지를 위한 Node.js 설치 추가
-        sudo apt-get install -y nodejs 
         sudo apt-get install -y ffmpeg ghostscript imagemagick
-        # ImageMagick 정책 수정 (MoviePy 텍스트 에러 방지)
+        # ImageMagick 정책 수정
         sudo sed -i 's/none/read,write/g' /etc/ImageMagick-6/policy.xml
         pip install -r requirements.txt
+
+    # [핵심] 등록한 쿠키 Secret을 실제 파일(cookies.txt)로 만듦
+    - name: Create Cookie File
+      run: echo "${{ secrets.YOUTUBE_COOKIES }}" > cookies.txt
 
     - name: Run Automation Script
       env:
@@ -36,7 +44,6 @@ jobs:
         YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
         YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
         YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         EMAIL_USER: ${{ secrets.EMAIL_USER }}
         EMAIL_PASS: ${{ secrets.EMAIL_PASS }}
         SHEET_URL: ${{ secrets.SHEET_URL }}
