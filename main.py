@@ -10,10 +10,9 @@ from google.oauth2.credentials import Credentials as UserCredentials
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload
 from yt_dlp import YoutubeDL
-# afx는 오디오 효과(페이드아웃 등)를 위해 필요합니다
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, vfx, afx, concatenate_videoclips
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, vfx, concatenate_videoclips
 from moviepy.config import change_settings
-# 리눅스 환경(GitHub Actions)을 위한 ImageMagick 경로 설정
+# 리눅스 환경(GitHub Actions) 설정을 위한 ImageMagick 경로
 change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 from email.mime.text import MIMEText
@@ -32,11 +31,12 @@ except KeyError as e:
     print(f"❌ [설정 오류] {e}가 없습니다. GitHub Secrets를 확인하세요.")
     exit(1)
 
-# --- ⚙️ 사용자 설정 (여기만 바꾸면 됩니다) ---
-TARGET_DURATION_MIN = 15   # 목표 영상 길이 (분). 예: 60으로 하면 1시간짜리 영상 생성
-LOFI_SPEED = 0.85          # 속도 조절 (0.8 ~ 0.9 추천)
-RESOLUTION_HEIGHT = 720    # 해상도 (720p 권장, 1080p는 렌더링 오래 걸림)
-PRIVACY_STATUS = 'public'  # 공개 설정 ('private', 'unlisted', 'public')
+# --- ⚙️ 운영 설정값 ---
+TARGET_DURATION_MIN = 15   # 요청하신 15분 길이 유지
+LOFI_SPEED = 0.85          # 감성적인 속도
+RESOLUTION_HEIGHT = 720    # 안정적인 720p
+PRIVACY_STATUS = 'public'  # 바로 공개 (수익 창출용)
+FONT_PATH = './font.ttf'   # 깃허브에 올린 폰트 파일 경로
 
 def send_email(subject, body):
     try:
@@ -75,7 +75,6 @@ def get_random_link():
         all_values = sheet.get_all_values()
         if len(all_values) < 2: return None, "데이터 없음"
         
-        # 유튜브 링크가 포함된 셀만 추출
         valid_links = [cell for row in all_values[1:] for cell in row if "youtube.com" in cell or "youtu.be" in cell]
         
         if not valid_links: return None, "링크 없음"
@@ -94,7 +93,7 @@ def download_video(url):
         'outtmpl': 'downloaded_video.%(ext)s',
         'merge_output_format': 'mp4',
         'noplaylist': True,
-        'cookiefile': 'cookies.txt', 
+        'cookiefile': 'cookies.txt', # 쿠키 필수
         'retries': 10,
         'http_headers': {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'},
     }
@@ -109,41 +108,49 @@ def process_lofi_video(input_path, original_title):
     clip = VideoFileClip(input_path)
     if not clip.audio: return input_path 
 
-    # 1. 속도 및 색감 조절 (Lofi Vibe)
+    # 1. Lofi Vibe (속도/색감)
     slow_clip = clip.fx(vfx.speedx, LOFI_SPEED)
     styled_clip = slow_clip.fx(vfx.colorx, 0.7).fx(vfx.lum_contrast, lum=0, contrast=0.1)
     
     if styled_clip.h > RESOLUTION_HEIGHT:
         styled_clip = styled_clip.resize(height=RESOLUTION_HEIGHT)
 
-    # 2. 루프(반복) 처리
+    # 2. 15분 루프 생성
     current_duration = styled_clip.duration
     target_duration = TARGET_DURATION_MIN * 60
     
     if current_duration < target_duration:
         repeat_count = int(target_duration // current_duration) + 1
-        print(f" - 원본이 짧아 {repeat_count}회 반복 연결합니다.")
+        print(f" - {repeat_count}회 반복하여 길이를 늘립니다.")
         final_clip = concatenate_videoclips([styled_clip] * repeat_count)
         final_clip = final_clip.subclip(0, target_duration)
     else:
         final_clip = styled_clip.subclip(0, target_duration)
 
-    # 3. 오디오 페이드 아웃 (끝날 때 자연스럽게 소리 줄임 - 5초)
+    # 3. 오디오 페이드 아웃 (자연스러운 종료)
     final_clip = final_clip.audio_fadeout(5)
 
-    # 4. 자막 오버레이
+    # 4. 자막 생성 (한글 폰트 적용)
     print(" - 자막 작업 중...")
     try:
         display_title = original_title[:30] + "..." if len(original_title) > 30 else original_title
         text_content = f"{display_title}\nSlowed & Reverb Mix"
         
-        txt_clip = TextClip(text_content, fontsize=24, color='white', font='DejaVu-Sans-Bold', align='center')
+        # [중요] 업로드한 font.ttf 사용
+        if os.path.exists(FONT_PATH):
+            font_to_use = FONT_PATH
+            print(f" - 사용자 폰트 적용: {FONT_PATH}")
+        else:
+            font_to_use = 'DejaVu-Sans-Bold' # 백업용 (한글 깨질 수 있음)
+            print("⚠️ 폰트 파일이 없어 기본 폰트를 사용합니다.")
+
+        txt_clip = TextClip(text_content, fontsize=24, color='white', font=font_to_use, align='center')
         txt_clip = txt_clip.set_pos(('center', 0.8), relative=True).set_duration(final_clip.duration)
         txt_clip = txt_clip.set_opacity(0.6)
         
         final_video = CompositeVideoClip([final_clip, txt_clip])
     except Exception as e:
-        print(f"⚠️ 자막 생성 실패(폰트 등): {e}")
+        print(f"⚠️ 자막 생성 실패: {e}")
         final_video = final_clip
 
     output_filename = "output_final.mp4"
@@ -170,12 +177,12 @@ def upload_to_youtube(file_path, title):
     youtube = build('youtube', 'v3', credentials=creds)
     today_str = datetime.datetime.now().strftime("%Y.%m.%d")
     
-    # 제목 최적화
+    # 제목 정리
     clean_title = title.replace("Official Video", "").replace("MV", "").replace("Lyrics", "").strip()
     video_title = f"🎧 {clean_title} (Slowed & Reverb) | {TARGET_DURATION_MIN}분 반복"
     if len(video_title) > 100: video_title = video_title[:95] + "..."
 
-    # 설명 최적화 (SEO)
+    # 설명 정리
     description = f"""
 🎧 {clean_title} - Slowed & Reverb Loop ({TARGET_DURATION_MIN} Mins)
 
@@ -201,7 +208,7 @@ Remixed for relaxation purposes.
             'categoryId': '10' 
         },
         'status': {
-            'privacyStatus': PRIVACY_STATUS, # public으로 설정됨
+            'privacyStatus': PRIVACY_STATUS,
             'selfDeclaredMadeForKids': False,
         }
     }
@@ -217,17 +224,12 @@ if __name__ == "__main__":
     output_file = "output_final.mp4"
     
     try:
-        # 1. 링크 가져오기
         url, msg = get_random_link()
         if url:
-            # 2. 다운로드
             downloaded_file, original_title = download_video(url)
-            # 3. 변환 (설정된 시간만큼 루프 & 페이드아웃)
             output_file = process_lofi_video(downloaded_file, original_title)
-            # 4. 업로드 (공개)
             vid_id = upload_to_youtube(output_file, original_title)
             
-            # 성공 메일 (선택사항)
             try:
                 send_email(
                     f"[성공] {original_title} 업로드 완료", 
@@ -241,5 +243,4 @@ if __name__ == "__main__":
         try: send_email("[실패] 에러 발생", str(e))
         except: pass
     finally:
-        # 파일 정리
         cleanup_files([downloaded_file, output_file, "cookies.txt"])
